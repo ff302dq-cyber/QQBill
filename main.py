@@ -19,7 +19,7 @@ def debt_notice(role, debt_usd):
     who = role or "角色"
     return (f"【系统消息】{who}和你通讯的手机欠费啦……\n"
             f"你目前欠了 ￥{debt_usd:.3f} 话费，已经到了欠费上限，暂时收不到{who}的回复了。\n"
-            f"私聊任意一位角色发送 bill，打开链接就能充值。充值时会先扣掉欠费，剩下的继续使用。")
+            f"私聊任意一位角色发送 bill，打开链接就能充值。充值时会先扣掉欠费，剩下的继续使用。\n如有问题请尝试在角色小窗发送billhelp，或者联系菌qq：2913391415")
 
 
 @register("astrbot_plugin_ledger", "firejunjun", "话费账本计费", "4.0.0")
@@ -283,7 +283,7 @@ class LedgerPlugin(Star):
                 logger.debug(f"[账本] 读取主动消息设置失败: {e}")
         yield self.forward_result(event,
             "【系统提示】话费小账本使用说明\n"
-            f"群聊里的指令前面要加唤醒词「{p}」，私聊直接发送bill或billhelp。\n"
+            f"群聊里的指令前面要加唤醒词「{p}」，私聊直接发送bill或billhelp。如有问题联系菌qq：2913391415\n"
             "\n"
             "查话费\n"
             f"· {p}bill：查看话费、领取账本链接（群里发会送到小窗）\n"
