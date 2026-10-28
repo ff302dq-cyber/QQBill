@@ -12,6 +12,9 @@ from astrbot.api.star import Context, Star, StarTools, register
 
 from .ledger_client import LedgerClient
 
+FORWARD_NAME = "话费小账本"
+
+
 def debt_notice(role, debt_usd):
     who = role or "角色"
     return (f"【系统消息】{who}和你通讯的手机欠费啦……\n"
@@ -39,7 +42,9 @@ class LedgerPlugin(Star):
             exempt=exempt,
         )
         # 让记忆插件、主动消息插件也能找到同一个账本客户端
-        sys.modules["astrbot_ledger"] = types.SimpleNamespace(client=self.client, notify=self._notify_insufficient)
+        sys.modules["astrbot_ledger"] = types.SimpleNamespace(
+            client=self.client, notify=self._notify_insufficient,
+            forward_result=self.forward_result, send_forward=self.send_forward)
         self.client.start()
         self._last_notice = {}
         logger.info(f"[账本] 已启动，角色={self.client.bot or '未命名'}，账本={self.client.url}")
@@ -62,6 +67,46 @@ class LedgerPlugin(Star):
             except Exception:
                 pass
         return ""
+
+    # ---------- 折叠转发：系统消息和角色说话区分开 ----------
+    def _node_chain(self, event: AstrMessageEvent, texts):
+        uin = str(event.get_self_id() or "0")
+        nodes = [Comp.Node(uin=uin, name=FORWARD_NAME, content=[Comp.Plain(t)]) for t in texts]
+        try:
+            return [Comp.Nodes(nodes=nodes)]
+        except Exception:
+            return nodes
+
+    def forward_result(self, event: AstrMessageEvent, *texts):
+        return event.chain_result(self._node_chain(event, texts))
+
+    async def send_forward(self, event: AstrMessageEvent, *texts):
+        try:
+            await event.send(MessageChain(chain=self._node_chain(event, texts)))
+        except Exception as e:
+            logger.debug(f"[账本] 折叠消息发送失败，改发普通消息: {e}")
+            await event.send(MessageChain().message("\n\n".join(texts)))
+
+    async def send_private_forward(self, event: AstrMessageEvent, qq, *texts):
+        """私聊对方，用折叠转发；对方不是好友时退回临时会话普通消息"""
+        api = event.bot.api
+        uin = str(event.get_self_id() or "0")
+        msgs = [{"type": "node", "data": {"name": FORWARD_NAME, "uin": uin,
+                                          "content": [{"type": "text", "data": {"text": t}}]}} for t in texts]
+        try:
+            await api.call_action("send_private_forward_msg", user_id=int(qq), messages=msgs)
+            return True
+        except Exception as e:
+            logger.debug(f"[账本] 私聊折叠消息失败，改发普通消息: {e}")
+        kwargs = {"user_id": int(qq), "message": "\n\n".join(texts)}
+        if event.get_group_id():
+            kwargs["group_id"] = int(event.get_group_id())
+        try:
+            await api.call_action("send_private_msg", **kwargs)
+            return True
+        except Exception as e:
+            logger.debug(f"[账本] 私聊发送失败（可能不是好友）: {e}")
+            return False
 
     def _cooldown_ok(self, qq):
         cooldown = int(self.config.get("notice_cooldown_minutes", 30)) * 60
@@ -90,7 +135,7 @@ class LedgerPlugin(Star):
         text = debt_notice(self.client.bot, max(-bal, 0) / 1_000_000)
         group = event.get_group_id()
         if not group:
-            await event.send(MessageChain().message(text))
+            await self.send_forward(event, text)
             return
         if event.get_platform_name() != "aiocqhttp":
             return
@@ -102,10 +147,7 @@ class LedgerPlugin(Star):
             except Exception as e:
                 logger.debug(f"[账本] 贴表情失败: {e}")
         if self._cooldown_ok(qq):
-            try:
-                await api.call_action("send_private_msg", user_id=int(qq), group_id=int(group), message=text)
-            except Exception as e:
-                logger.debug(f"[账本] 私聊系统消息发送失败（可能不是好友）: {e}")
+            await self.send_private_forward(event, qq, text)
 
     # ---------- 聊天计费 ----------
     @filter.on_llm_request()
@@ -144,7 +186,7 @@ class LedgerPlugin(Star):
         # 模型最终失败、没走到这里的挂单，账本会在10分钟后自动退回
 
     # ---------- 指令 ----------
-    async def _bill_text(self, qq, nickname):
+    async def _bill_texts(self, qq, nickname):
         url = await self.client.login_link(qq, nickname)
         line = ""
         try:
@@ -154,29 +196,29 @@ class LedgerPlugin(Star):
                     else f"当前话费 ￥{bal:.3f}，大约还能聊 {b['chats_left']} 次。\n")
         except Exception:
             pass
-        return f"【话费账本】\n{line}查看明细或充值请点链接（24小时内有效，可重复打开，不要发给别人）：\n{url}"
+        intro = ("【话费账本】\n" + line +
+                 "\n↓ 复制下面的链接，粘贴到手机自带的浏览器（Safari、Chrome 等）里打开，"
+                 "就能查看明细和充值。QQ 里没法跳转支付宝。\n"
+                 "链接24小时内有效，可以重复打开，不要发给别人。")
+        return intro, url
 
     @filter.command("bill", alias={"Bill", "BILL"})
     async def bill(self, event: AstrMessageEvent):
         qq = event.get_sender_id()
         try:
-            text = await self._bill_text(qq, event.get_sender_name())
+            intro, url = await self._bill_texts(qq, event.get_sender_name())
         except Exception as e:
             logger.warning(f"[账本] 生成账本链接失败: {e}")
-            yield event.plain_result("账本暂时连不上，过一会儿再试试。")
+            yield self.forward_result(event, "【系统提示】账本暂时连不上，过一会儿再试试。")
             return
-        group = event.get_group_id()
-        if not group:
-            yield event.plain_result(text)
+        if not event.get_group_id():
+            yield self.forward_result(event, intro, url)
             return
-        # 群里：链接私聊发过去，群里只说一句
-        try:
-            await event.bot.api.call_action("send_private_msg", user_id=int(qq), group_id=int(group), message=text)
-        except Exception as e:
-            logger.debug(f"[账本] 群里 bill 私聊发送失败: {e}")
-            yield event.plain_result("账本链接要私聊发哦，私聊我发送 bill 就行。")
-            return
-        yield event.plain_result("【系统提示】话费小账本发给小窗啦！")
+        # 群里：链接发到小窗，群里只留一条折叠提示
+        if await self.send_private_forward(event, qq, intro, url):
+            yield self.forward_result(event, "【系统提示】话费小账本发给小窗啦！")
+        else:
+            yield self.forward_result(event, "【系统提示】账本链接要私聊发哦，私聊我发送 bill 就行。")
 
     @filter.command("billhelp", alias={"Billhelp", "BILLHELP", "billHelp"})
     async def billhelp(self, event: AstrMessageEvent):
@@ -188,7 +230,7 @@ class LedgerPlugin(Star):
         except Exception:
             pass
         free_line = f"· 每人每天前 {free} 次调用免费\n" if free else ""
-        yield event.plain_result(
+        yield self.forward_result(event,
             "【系统提示】话费小账本使用说明\n"
             f"群聊里的指令前面要加唤醒词「{p}」，私聊直接发送就行。\n"
             "\n"
