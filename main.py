@@ -196,9 +196,9 @@ class LedgerPlugin(Star):
                     else f"当前话费 ￥{bal:.3f}，大约还能聊 {b['chats_left']} 次。\n")
         except Exception:
             pass
-        intro = ("【话费账本】\n" + line +
+        intro = ("【系统提示-话费账本】\n" + line +
                  "\n↓ 复制下面的链接，粘贴到手机自带的浏览器（Safari、Chrome 等）里打开，"
-                 "就能查看明细和充值。QQ 里没法跳转支付宝。\n"
+                 "就能查看明细和充值。不要用QQ直接打开哦。\n"
                  "链接24小时内有效，可以重复打开，不要发给别人。")
         return intro, url
 
@@ -218,7 +218,7 @@ class LedgerPlugin(Star):
         if await self.send_private_forward(event, qq, intro, url):
             yield self.forward_result(event, "【系统提示】话费小账本发给小窗啦！")
         else:
-            yield self.forward_result(event, "【系统提示】账本链接要私聊发哦，私聊我发送 bill 就行。")
+            yield self.forward_result(event, "【系统提示】账本链接要私聊发哦，私聊发送 bill 就行。")
 
     @filter.command("billhelp", alias={"Billhelp", "BILLHELP", "billHelp"})
     async def billhelp(self, event: AstrMessageEvent):
@@ -230,9 +230,27 @@ class LedgerPlugin(Star):
         except Exception:
             pass
         free_line = f"· 每人每天前 {free} 次调用免费\n" if free else ""
+        status_block = ""
+        am = sys.modules.get("astrbot_activemessage")
+        if am and getattr(am, "status", None):
+            try:
+                st = am.status(event.get_sender_id())
+                who = self.client.bot or "这个角色"
+                if not st.get("followup_enabled", True):
+                    fu = "未启用（管理员关闭了这个功能）"
+                else:
+                    fu = "开启" if st["followup_on"] else "关闭"
+                status_block = (
+                    "\n\n"
+                    f"你在{who}这里的当前设置（私聊）\n"
+                    f"· 主动消息：{'开启' if st['idle_on'] else '关闭'}，频率 {st['freq']}\n"
+                    f"· 回复追发：{fu}"
+                )
+            except Exception as e:
+                logger.debug(f"[账本] 读取主动消息设置失败: {e}")
         yield self.forward_result(event,
             "【系统提示】话费小账本使用说明\n"
-            f"群聊里的指令前面要加唤醒词「{p}」，私聊直接发送就行。\n"
+            f"群聊里的指令前面要加唤醒词「{p}」，私聊直接发送bill或billhelp。\n"
             "\n"
             "查话费\n"
             f"· {p}bill：查看话费、领取账本链接（群里发会送到小窗）\n"
@@ -240,16 +258,17 @@ class LedgerPlugin(Star):
             "\n"
             "怎么计费\n"
             f"· 角色每调用一次模型 ￥{price:.3f}\n"
-            "· 群聊一条消息算 1 次；私聊一条消息算 2 次（回复 1 次，判断要不要追发 1 次）\n"
-            "· 每发一张图多算 1 次；记忆整理类指令按实际调用次数算\n"
-            f"· 让角色互相说话（{p}tell名字 内容、{p}forw名字 内容）由发起的人付 1 次，之后角色之间的对话由公共钱包承担\n"
+            "· 群聊一条消息算 1 次；私聊一条消息算 1 次（私聊开启回复追发时，私聊一条消息算2次，回复消息1次+判断是否追发消息1次）\n"
+            "· 每发一张图多算 1 次（识别图片）；记忆整理类指令按实际调用次数算，聊天到特定轮数自动总结或手动生成记忆都会计费。\n"
+            f"· 群聊中让角色互相说话（{p}tell名字 内容、{p}forw名字 内容）由发起的人付 1 次，之后角色之间的对话由公共钱包承担\n"
             f"{free_line}"
             f"· 最多可以欠 ￥{debt:.2f}，欠到上限角色会暂时没法回复，充值时先扣欠费\n"
             "\n"
             "主动消息（每个角色分开设置）\n"
             f"· {p}关闭主动消息 / {p}开启主动消息：空闲时角色会不会主动找你\n"
-            f"· {p}主动消息频率 高 / 中 / 低\n"
-            f"· {p}关闭回复追发 / {p}开启回复追发：角色回复后会不会过一会儿再追一句，关掉后私聊每条只算 1 次"
+            f"· {p}主动消息频率 高 / 中 / 低：调整主动消息的频率，默认中（注意指令的高/中/低前有空格）。\n"
+            f"· {p}关闭回复追发 / {p}开启回复追发：角色回复后会不会过一会儿再追一句，开启时私聊每条消息算2次，默认关闭。"
+            f"{status_block}"
         )
 
     async def terminate(self):
