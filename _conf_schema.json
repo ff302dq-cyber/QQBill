@@ -1,0 +1,42 @@
+{
+  "ledger_url": {
+    "description": "账本地址",
+    "type": "string",
+    "default": "https://ledger.firejunjun.art"
+  },
+  "secret": {
+    "description": "账本口令（和 config.env 里的 LEDGER_SECRET 一样）",
+    "type": "string",
+    "default": ""
+  },
+  "bot_name": {
+    "description": "这个Bot的角色名，用于明细显示，比如 甲",
+    "type": "string",
+    "default": ""
+  },
+  "exempt_qq": {
+    "description": "不计费的QQ号（比如你自己），多个用英文逗号隔开",
+    "type": "string",
+    "default": ""
+  },
+  "insufficient_emoji_id": {
+    "description": "欠费到上限时，在群里无法回复的消息上贴的表情ID（默认 111 是“可怜”），留空则不贴",
+    "type": "string",
+    "default": "111"
+  },
+  "notice_cooldown_minutes": {
+    "description": "群聊欠费时的私聊系统消息，同一个人多少分钟内只发一次",
+    "type": "int",
+    "default": 30
+  },
+  "charge_images": {
+    "description": "开启了图片转述时，每张图额外记一次",
+    "type": "bool",
+    "default": true
+  },
+  "offline_allowance": {
+    "description": "连不上账本时，每人最多先放行几次",
+    "type": "int",
+    "default": 5
+  }
+}
