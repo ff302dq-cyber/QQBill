@@ -22,7 +22,7 @@ def debt_notice(role, debt_usd):
             f"私聊任意一位角色发送 bill，打开链接就能充值。充值时会先扣掉欠费，剩下的继续使用。")
 
 
-@register("astrbot_plugin_ledger", "firejunjun", "话费账本计费", "1.0.0")
+@register("astrbot_plugin_ledger", "firejunjun", "话费账本计费", "4.0.0")
 class LedgerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -44,7 +44,8 @@ class LedgerPlugin(Star):
         # 让记忆插件、主动消息插件也能找到同一个账本客户端
         sys.modules["astrbot_ledger"] = types.SimpleNamespace(
             client=self.client, notify=self._notify_insufficient,
-            forward_result=self.forward_result, send_forward=self.send_forward)
+            forward_result=self.forward_result, send_forward=self.send_forward,
+            billed_generate=self.billed_generate, billed_text_chat=self.billed_text_chat)
         self.client.start()
         self._last_notice = {}
         logger.info(f"[账本] 已启动，角色={self.client.bot or '未命名'}，账本={self.client.url}")
@@ -148,6 +149,38 @@ class LedgerPlugin(Star):
                 logger.debug(f"[账本] 贴表情失败: {e}")
         if self._cooldown_ok(qq):
             await self.send_private_forward(event, qq, text)
+
+    # ---------- 给其他插件用：塔罗、六爻、戳一戳等直接调用模型的地方 ----------
+    async def _billed(self, event: AstrMessageEvent, kind, model, call, silent=False):
+        qq = str(event.get_sender_id() or "")
+        if not qq:
+            return await call()
+        ok, cid, info = await self.client.charge(
+            qq=qq, kind=kind, model=str(model or ""), group_id=event.get_group_id() or "",
+            nickname=event.get_sender_name())
+        if not ok:
+            if not silent:
+                await self._notify_insufficient(event, info)
+            return None
+        try:
+            resp = await call()
+        except Exception:
+            await self.client.settle(cid, False)
+            raise
+        await self.client.settle(cid, True)
+        return resp
+
+    async def billed_generate(self, context, event, kind, silent=False, **kwargs):
+        return await self._billed(event, kind, kwargs.get("chat_provider_id", ""),
+                                  lambda: context.llm_generate(**kwargs), silent)
+
+    async def billed_text_chat(self, provider, event, kind, silent=False, **kwargs):
+        model = ""
+        try:
+            model = provider.provider_config.get("id") or provider.get_model()
+        except Exception:
+            pass
+        return await self._billed(event, kind, model, lambda: provider.text_chat(**kwargs), silent)
 
     # ---------- 聊天计费 ----------
     @filter.on_llm_request()
@@ -260,7 +293,8 @@ class LedgerPlugin(Star):
             f"· 角色每调用一次模型 ￥{price:.3f}\n"
             "· 群聊一条消息算 1 次；私聊一条消息算 1 次（私聊开启回复追发时，私聊一条消息算2次，回复消息1次+判断是否追发消息1次）\n"
             "· 每发一张图多算 1 次（识别图片）；记忆整理类指令按实际调用次数算，聊天到特定轮数自动总结或手动生成记忆都会计费。\n"
-            f"· 群聊中让角色互相说话（{p}tell名字 内容、{p}forw名字 内容）由发起的人付 1 次，之后角色之间的对话由公共钱包承担\n"
+            f"· 让角色互相说话（{p}tell名字 内容、{p}forw名字 内容）由发起的人付 1 次，之后角色之间的对话由公共钱包承担\n"
+            "· 塔罗、雷诺曼、六爻的解读和追问，戳一戳的回复，妙手空空的AI物品，各算 1 次；角色回复时挑小表情也算 1 次（话费不足时自动改成随机表情，不扣钱）\n"
             f"{free_line}"
             f"· 最多可以欠 ￥{debt:.2f}，欠到上限角色会暂时没法回复，充值时先扣欠费\n"
             "\n"

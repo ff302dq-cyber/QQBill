@@ -1,6 +1,6 @@
 name: astrbot_plugin_ledger
 display_name: 话费小账本
 desc: 按次扣费、统一欠费上限、欠费提醒、bill 查话费
-version: 3.0.0
+version: 4.0.0
 author: firejunjun
 repo: "https://github.com/ff302dq-cyber/QQBill"
