@@ -126,6 +126,7 @@ class LedgerPlugin(Star):
             event.stop_event()
             await self._notify_insufficient(event, info)
             return
+        event.set_extra("ledger_llm", True)  # 标记：这条消息真的调用了模型（主动消息插件据此判断要不要做回复后决策）
         if cid:
             event.set_extra("ledger_cid", cid)
         if self.config.get("charge_images", True):
@@ -153,7 +154,7 @@ class LedgerPlugin(Star):
                     else f"当前话费 ￥{bal:.3f}，大约还能聊 {b['chats_left']} 次。\n")
         except Exception:
             pass
-        return f"【话费账本】\n{line}查看明细或充值请点链接（15分钟内有效，不要发给别人）：\n{url}"
+        return f"【话费账本】\n{line}查看明细或充值请点链接（24小时内有效，可重复打开，不要发给别人）：\n{url}"
 
     @filter.command("bill", alias={"Bill", "BILL"})
     async def bill(self, event: AstrMessageEvent):
