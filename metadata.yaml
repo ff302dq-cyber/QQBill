@@ -1,5 +1,6 @@
 name: astrbot_plugin_ledger
+display_name: 话费小账本
 desc: 话费账本计费：按次扣费、统一欠费上限、欠费提醒、我的账本链接
-version: 1.0.0
+version: 1.1.0
 author: firejunjun
 repo: ""
