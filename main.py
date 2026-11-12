@@ -19,10 +19,10 @@ def debt_notice(role, debt_usd):
     who = role or "角色"
     return (f"【系统消息】{who}和你通讯的手机欠费啦……\n"
             f"你目前欠了 ￥{debt_usd:.3f} 话费，已经到了欠费上限，暂时收不到{who}的回复了。\n"
-            f"私聊任意一位角色发送 bill，打开链接就能充值。充值时会先扣掉欠费，剩下的继续使用。\n如有问题请尝试在角色小窗发送billhelp，或者联系菌qq：2913391415")
+            f"私聊任意一位角色发送 bill，打开链接就能充值。充值时会先扣掉欠费，剩下的继续使用。")
 
 
-@register("astrbot_plugin_ledger", "firejunjun", "话费账本计费", "4.0.0")
+@register("astrbot_plugin_ledger", "firejunjun", "话费账本计费", "4.0.2")
 class LedgerPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -52,6 +52,7 @@ class LedgerPlugin(Star):
 
     # ---------- 工具 ----------
     def _model_name(self, event):
+        """当前窗口实际用的模型名（用 #model 切换过的也算），拿不到再用提供商ID"""
         try:
             p = self.context.get_using_provider(umo=event.unified_msg_origin)
         except TypeError:
@@ -60,7 +61,7 @@ class LedgerPlugin(Star):
             p = None
         if not p:
             return ""
-        for getter in (lambda: p.provider_config.get("id"), lambda: p.get_model()):
+        for getter in (lambda: p.get_model(), lambda: p.provider_config.get("id")):
             try:
                 v = getter()
                 if v:
@@ -68,6 +69,22 @@ class LedgerPlugin(Star):
             except Exception:
                 pass
         return ""
+
+    def _rule_model(self, event):
+        """专属模型规则：某个QQ在私聊/群聊/某个群里固定用某个模型"""
+        qq = str(event.get_sender_id() or "")
+        gid = str(event.get_group_id() or "")
+        for line in str(self.config.get("model_rules", "") or "").splitlines():
+            parts = line.strip().split(None, 2)
+            if len(parts) < 3 or parts[0] != qq:
+                continue
+            scope, model = parts[1], parts[2].strip()
+            if (scope in ("全部", "all")
+                    or (scope in ("私聊", "private") and not gid)
+                    or (scope in ("群聊", "group") and gid)
+                    or scope == gid):
+                return model
+        return None
 
     # ---------- 折叠转发：系统消息和角色说话区分开 ----------
     def _node_chain(self, event: AstrMessageEvent, texts):
@@ -195,8 +212,13 @@ class LedgerPlugin(Star):
                 text = text[len(p):]
                 break
         kind = "tell" if re.match(r"tell\S", text) else "chat"
+        special = self._rule_model(event)
+        if special:
+            req.model = special  # 只换这一次请求的模型，不影响其他人
+            logger.info(f"[账本] {qq} 命中专属模型规则，本次使用 {special}")
+        model = special or getattr(req, "model", None) or self._model_name(event)
         ok, cid, info = await self.client.charge(
-            qq=qq, kind=kind, model=self._model_name(event), group_id=group, nickname=event.get_sender_name())
+            qq=qq, kind=kind, model=str(model or ""), group_id=group, nickname=event.get_sender_name())
         if not ok:
             event.stop_event()
             await self._notify_insufficient(event, info)
@@ -283,7 +305,7 @@ class LedgerPlugin(Star):
                 logger.debug(f"[账本] 读取主动消息设置失败: {e}")
         yield self.forward_result(event,
             "【系统提示】话费小账本使用说明\n"
-            f"群聊里的指令前面要加唤醒词「{p}」，私聊直接发送bill或billhelp。如有问题联系菌qq：2913391415\n"
+            f"群聊里的指令前面要加唤醒词「{p}」，私聊直接发送bill或billhelp。\n"
             "\n"
             "查话费\n"
             f"· {p}bill：查看话费、领取账本链接（群里发会送到小窗）\n"
